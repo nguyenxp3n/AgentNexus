@@ -1,0 +1,77 @@
+version: 1
+project:
+  name: agent-nexus-example
+
+tasks:
+  - id: TASK-001
+    title: Backend API
+    description: Build an isolated API feature.
+    role: core_backend
+    dependencies: []
+    ownership:
+      allowed_paths: ["src/api/**", "tests/api/**"]
+      readonly_paths: ["pyproject.toml"]
+      forbidden_paths: [".github/**", ".env"]
+    resources:
+      migration_count: 1
+      ports:
+        api: 1
+    acceptance:
+      criteria:
+        - id: AC-001
+          description: API tests pass
+          verification:
+            type: command
+            command: ["pytest", "tests/api", "-q"]
+    verification:
+      - type: command
+        command: ["pytest", "tests/api", "-q"]
+    harness:
+      adapter: claude-code
+      env_allowlist: []
+    timeout_seconds: 3600
+    max_attempts: 2
+    priority: 10
+    allow_noop: false
+
+  - id: TASK-002
+    title: UI
+    description: Build an independent UI feature in parallel with TASK-001.
+    role: fullstack_ui
+    dependencies: []
+    ownership:
+      allowed_paths: ["web/**", "tests/ui/**"]
+      readonly_paths: ["pyproject.toml"]
+      forbidden_paths: [".env"]
+    resources:
+      ports:
+        web: 1
+    acceptance:
+      criteria: []
+    verification: []
+    timeout_seconds: 3600
+    max_attempts: 2
+    priority: 5
+    allow_noop: false
+
+  - id: TASK-003
+    title: Integration checks
+    description: Verify the integrated API and UI after both complete.
+    role: qa_audit
+    dependencies: ["TASK-001", "TASK-002"]
+    ownership:
+      allowed_paths: ["tests/integration/**"]
+      readonly_paths: ["src/**", "web/**"]
+      forbidden_paths: [".env"]
+    resources:
+      ports:
+        test: 1
+    acceptance:
+      criteria: []
+    verification:
+      - type: command
+        command: ["pytest", "tests/integration", "-q"]
+    timeout_seconds: 1800
+    max_attempts: 1
+    priority: 0
+    allow_noop: true
