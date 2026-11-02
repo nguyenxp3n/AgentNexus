@@ -1,5 +1,9 @@
 # AgentNexus (CLI: `nexus`)
 
+[![CI](https://github.com/nguyenxp3n/AgentNexus/actions/workflows/ci.yml/badge.svg)](https://github.com/nguyenxp3n/AgentNexus/actions/workflows/ci.yml)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/release/python-3120/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+
 `AgentNexus` is an executable Python 3.12+ control plane for coordinating multiple autonomous coding agents against one Git repository without treating agent prose as proof of completion.
 
 Its safety model is based on four rules:
@@ -26,6 +30,51 @@ Its safety model is based on four rules:
 - Typer/Rich CLI (`nexus`, with `agentnexus` and `orch` aliases) plus the same Python core services for programmatic use.
 
 ## System Architecture
+
+```text
++-----------------------------------------------------------------------------------+
+|                        AgentNexus Orchestration Architecture                      |
++-----------------------------------------------------------------------------------+
+|                                                                                   |
+|  [ tasks.yaml Plan Spec ]                                                         |
+|         │                                                                         |
+|         ▼                                                                         |
+|  ┌─────────────────────────────────────────────────────────────────────────────┐  |
+|  │ 1. DAG EXECUTION ENGINE (NetworkX)                                          │  |
+|  │    • Validates acyclic task dependency graph & rejects circular references  │  |
+|  │    • Partitions tasks into topological waves (Wave 0, 1, 2...)              │  |
+|  │    • Enforces atomic path, migration slot & port isolation locks            │  |
+|  └─────────────────────────────────────────────────────────────────────────────┘  |
+|         │                                                                         |
+|         ▼                                                                         |
+|  ┌─────────────────────────────────────────────────────────────────────────────┐  |
+|  │ 2. ISOLATED GIT WORKTREE ENVIRONMENT                                        │  |
+|  │    • Creates attempt-scoped native Git worktrees from exact base SHA        │  |
+|  │    • Sandboxes home, temp, state, artifacts & auto-redacts secrets          │  |
+|  │    • AI Agents (Claude Code / Gemini CLI / Antigravity / Aider) execute     │  |
+|  │    • Freezes candidate Git commit SHA on completion                         │  |
+|  └─────────────────────────────────────────────────────────────────────────────┘  |
+|         │                                                                         |
+|         ▼                                                                         |
+|  ┌─────────────────────────────────────────────────────────────────────────────┐  |
+|  │ 3. 7-GATE ZERO-TRUST AUDIT                                                  │  |
+|  │    Gate 1: Git Identity & Clean Working Tree                                │  |
+|  │    Gate 2: Scope & Boundary Enforcement (diff within allowed_paths)         │  |
+|  │    Gate 3: Physical Verification Test Execution (exit code == 0)            │  |
+|  │    Gate 4: Secret & Credential Scan (Private keys, tokens, regex)          │  |
+|  │    Gate 5: Acceptance Criteria Verification                                 │  |
+|  │    Gate 6: Required Artifact Evidence Checks                                │  |
+|  │    Gate 7: Cryptographic SHA-256 Audit Certificate Generation              │  |
+|  └─────────────────────────────────────────────────────────────────────────────┘  |
+|         │                                                                         |
+|         ▼                                                                         |
+|  ┌─────────────────────────────────────────────────────────────────────────────┐  |
+|  │ 4. SEQUENTIAL INTEGRATION & CI AUTOMATION                                   │  |
+|  │    • Sequential --no-ff 3-way merge with pre-merge SHA auto-rollback        │  |
+|  │    • GitHub PR creation with audit badge & exact-SHA CI watch               │  |
+|  └─────────────────────────────────────────────────────────────────────────────┘  |
++-----------------------------------------------------------------------------------+
+```
 
 ```mermaid
 flowchart TD
@@ -128,46 +177,32 @@ nexus --help
 
 The build backend is Hatchling. Runtime dependencies are Typer, Rich, Pydantic v2, NetworkX and PyYAML. SQLite and subprocess/asyncio are from the Python standard library.
 
-## Quick start
+## Quickstart (30-second Demo)
 
-Initialize metadata in an existing Git repository:
+Run a complete multi-agent orchestration lifecycle with CLI `nexus`:
 
 ```bash
+# 1. Environment & dependencies health check
+nexus doctor
+
+# 2. Initialize control plane metadata and SQLite WAL state store (.orch/)
 nexus init
-```
 
-Validate a plan without changing runtime state:
-
-```bash
-nexus plan validate tasks.example.yaml
-```
-
-Activate it:
-
-```bash
+# 3. Validate DAG acyclicity and activate multi-agent execution plan
 nexus plan validate tasks.example.yaml --activate
 nexus plan status
-```
 
-Spawn one task or one topological wave:
-
-```bash
-nexus spawn --task TASK-001
+# 4. Spawn autonomous workers in isolated Git worktrees for Wave 0
 nexus spawn --wave 0
-```
 
-Audit and integrate candidates:
-
-```bash
+# 5. Run 7-gate zero-trust audit and sign cryptographic certificate
 nexus audit run TASK-001
+
+# 6. Safe sequential 3-way merge with auto-rollback on test regression
 nexus merge sequential --dry-run
 nexus merge sequential
-```
 
-Optional GitHub lifecycle:
-
-```bash
-nexus pr create-all
+# 7. (Optional) Watch GitHub PR CI with exact-SHA verification
 nexus pr watch-ci --pr 123 --sha <exact-head-sha>
 ```
 
