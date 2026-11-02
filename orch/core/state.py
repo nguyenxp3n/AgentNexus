@@ -40,6 +40,10 @@ class StateStore:
         Path(path).parent.mkdir(parents=True,exist_ok=True); c=sqlite3.connect(path,timeout=5,isolation_level=None,check_same_thread=False); c.row_factory=sqlite3.Row; c.execute('PRAGMA foreign_keys=ON'); c.execute('PRAGMA busy_timeout=5000'); return cls(Path(path),c)
     def close(self):
         if self._finalizer.alive:self._finalizer()
+    def __enter__(self)->StateStore:
+        return self
+    def __exit__(self,exc_type:Any,exc_val:Any,exc_tb:Any)->None:
+        self.close()
     def initialize(self):
         with self._lock:
             self._conn.execute('PRAGMA journal_mode=WAL'); self._conn.execute('PRAGMA synchronous=FULL'); self._conn.executescript(_SCHEMA)
@@ -52,8 +56,13 @@ class StateStore:
     def transaction(self,*,immediate:bool=False)->Iterator[sqlite3.Connection]:
         with self._lock:
             self._conn.execute('BEGIN IMMEDIATE' if immediate else 'BEGIN')
-            try:yield self._conn; self._conn.execute('COMMIT')
-            except Exception:self._conn.execute('ROLLBACK');raise
+            try:
+                yield self._conn
+                self._conn.execute('COMMIT')
+            except Exception:
+                try:self._conn.execute('ROLLBACK')
+                except sqlite3.OperationalError:pass
+                raise
     def create_run(self,run_id:str,state:RunState=RunState.CREATED):
         self._conn.execute('INSERT INTO runs(run_id,state,created_at) VALUES(?,?,?)',(run_id,state.value,datetime.now(timezone.utc).isoformat()))
     def get_run_state(self,run_id:str)->RunState:

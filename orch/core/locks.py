@@ -1,5 +1,5 @@
 from __future__ import annotations
-import fnmatch,time
+import fnmatch,re,time
 from enum import StrEnum
 from pathlib import Path,PurePosixPath
 from orch.core.state import StateStore
@@ -17,7 +17,7 @@ def _literal_prefix(pattern:str)->str:
     return '/'.join(parts)
 def normalize_repo_path(repo:Path,value:str)->str:
     repo=Path(repo).resolve(); raw=value.replace('\\','/')
-    if raw.startswith('/') or raw.startswith('~'):raise PathOwnershipError('absolute path not allowed')
+    if raw.startswith('/') or raw.startswith('~') or re.match(r'^[A-Za-z]:', raw):raise PathOwnershipError('absolute path not allowed')
     parts=[]
     for p in raw.split('/'):
         if p in ('','.'):continue
@@ -65,14 +65,16 @@ class LockManager:
             if a['generation']!=generation:raise StaleGenerationError(attempt_id)
             if a['state']!=TaskState.READY.value:raise ResourceUnavailable(f'attempt not READY: {a["state"]}')
             now=time.time(); expiry=now+request.lease_seconds
+            c.execute('DELETE FROM resource_locks WHERE expires_at IS NOT NULL AND expires_at<=?',(now,))
+            c.execute('DELETE FROM port_allocations WHERE expires_at IS NOT NULL AND expires_at<=?',(now,))
             existing=self._active_path_rows(c)
-            for p in sorted(request.paths):
-                p=normalize_repo_path(self.repo_root,p)
+            norm_paths=sorted(set(normalize_repo_path(self.repo_root,p) for p in request.paths))
+            for p in norm_paths:
                 for row in existing:
                     if row['attempt_id']==attempt_id:continue
                     overlap=classify_path_overlap(self.repo_root,p,row['resource_key'])
                     if overlap is not Overlap.PROVEN_DISJOINT:raise ResourceUnavailable(f'path conflict: {p} vs {row["resource_key"]}')
-                c.execute('INSERT INTO resource_locks(resource_type,resource_key,run_id,task_id,attempt_id,generation,mode,expires_at) VALUES(?,?,?,?,?,?,?,?)',('PATH',p,a['run_id'],a['task_id'],attempt_id,generation,LockMode.EXCLUSIVE_WRITE.value,expiry))
+                c.execute('INSERT INTO resource_locks(resource_type,resource_key,run_id,task_id,attempt_id,generation,mode,expires_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(resource_type,resource_key,attempt_id) DO UPDATE SET generation=excluded.generation,mode=excluded.mode,expires_at=excluded.expires_at',('PATH',p,a['run_id'],a['task_id'],attempt_id,generation,LockMode.EXCLUSIVE_WRITE.value,expiry))
             # Migration slots are monotonic and never reused.
             if request.migration_count:
                 r=c.execute("SELECT next_slot FROM migration_allocators WHERE name='default'").fetchone()
@@ -84,7 +86,7 @@ class LockManager:
                 if pool not in self.port_pools:raise ResourceUnavailable(f'unknown port pool: {pool}')
                 start,end=self.port_pools[pool];used={r['port'] for r in c.execute('SELECT port FROM port_allocations WHERE pool=? AND (expires_at IS NULL OR expires_at>?)',(pool,now)).fetchall()};free=[p for p in range(start,end+1) if p not in used]
                 if len(free)<count:raise ResourceUnavailable(f'port pool exhausted: {pool}')
-                for port in free[:count]:c.execute('INSERT INTO port_allocations(pool,port,attempt_id,run_id,expires_at) VALUES(?,?,?,?,?)',(pool,port,attempt_id,a['run_id'],expiry))
+                for port in free[:count]:c.execute('INSERT INTO port_allocations(pool,port,attempt_id,run_id,expires_at) VALUES(?,?,?,?,?) ON CONFLICT(pool,port) DO UPDATE SET attempt_id=excluded.attempt_id,run_id=excluded.run_id,expires_at=excluded.expires_at',(pool,port,attempt_id,a['run_id'],expiry))
             changed=c.execute('UPDATE task_attempts SET state=?,version=version+1 WHERE attempt_id=? AND state=? AND generation=?',(TaskState.ASSIGNED.value,attempt_id,TaskState.READY.value,generation))
             if changed.rowcount!=1:raise StateVersionConflict(attempt_id)
             self.store.append_event(a['run_id'],'ASSIGNMENT_ACQUIRED',{'paths':request.paths,'migration_count':request.migration_count,'ports':request.ports},task_id=a['task_id'],attempt_id=attempt_id,actor=TransitionActor.ORCHESTRATOR.value,conn=c)

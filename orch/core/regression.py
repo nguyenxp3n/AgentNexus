@@ -16,5 +16,5 @@ class VerificationRunner:
             p=subprocess.run(argv,cwd=Path(cwd),text=True,capture_output=True,shell=False,timeout=timeout_seconds,env=clean);code=p.returncode;stdout=p.stdout;stderr=p.stderr
         except subprocess.TimeoutExpired as e:
             timed=True;code=None;stdout=(e.stdout.decode() if isinstance(e.stdout,bytes) else e.stdout) or '';stderr=(e.stderr.decode() if isinstance(e.stderr,bytes) else e.stderr) or ''
-        out.write_text(stdout);err.write_text(stderr)
+        out.write_text(stdout,encoding='utf-8');err.write_text(stderr,encoding='utf-8')
         return CommandEvidence(list(argv),str(Path(cwd).resolve()),code,out,err,self._hash(out),self._hash(err),int((time.monotonic()-start)*1000),timed)

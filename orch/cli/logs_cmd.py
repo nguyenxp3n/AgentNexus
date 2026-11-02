@@ -7,5 +7,5 @@ def logs_command(task_id:str,repo:Path=typer.Option(Path('.'),'--repo'),attempt:
     try:
         repo=repo.resolve();s=StateStore.open(repo/'.orch/state.db');s.initialize();a=s.get_attempt(attempt) if attempt else s.current_attempt_for_task(s.latest_run_id(),task_id);s.close()
         if not a:raise KeyError(task_id)
-        p=repo/'.orch/logs'/task_id/a.attempt_id/('stderr.log' if stderr else 'stdout.log');lines=p.read_text().splitlines() if p.exists() else [];typer.echo('\n'.join(lines[-tail:]))
+        p=repo/'.orch/logs'/task_id/a.attempt_id/('stderr.log' if stderr else 'stdout.log');lines=p.read_text(encoding='utf-8',errors='replace').splitlines() if p.exists() else [];typer.echo('\n'.join(lines[-tail:]))
     except Exception as e:fail(e,False,'logs')

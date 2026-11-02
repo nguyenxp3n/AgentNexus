@@ -12,6 +12,27 @@ class RecoveryPlan:
     enter_safe_mode:bool=False; destructive_actions:list[dict]=field(default_factory=list); safe_actions:list[dict]=field(default_factory=list)
 @dataclass(frozen=True)
 class RecoveryBundle:path:Path;metadata_path:Path
+def is_pid_alive(pid:int)->bool:
+    if pid<=0:return False
+    if os.name=='nt':
+        try:
+            import ctypes
+            from ctypes import wintypes
+            kernel32=ctypes.windll.kernel32  # type: ignore[attr-defined]
+            h=kernel32.OpenProcess(0x1000,False,wintypes.DWORD(pid))
+            if not h:return False
+            try:
+                code=wintypes.DWORD()
+                if kernel32.GetExitCodeProcess(h,ctypes.byref(code)):return code.value==259
+                return False
+            finally:kernel32.CloseHandle(h)
+        except Exception:return False
+    if Path(f'/proc/{pid}').exists():return True
+    try:
+        os.kill(pid,0)
+        return True
+    except (ProcessLookupError,OSError):return False
+
 class RecoveryController:
     def __init__(self,repo:Path,store):self.repo=Path(repo).resolve();self.store=store
     def scan(self)->list[dict]:
@@ -22,7 +43,7 @@ class RecoveryController:
         for a in self.store.list_attempts():
             if a.state in {TaskState.SPAWNED,TaskState.IN_PROGRESS}:
                 row=self.store._conn.execute('SELECT * FROM agent_processes WHERE attempt_id=?',(a.attempt_id,)).fetchone()
-                if row and row['pid'] and not Path(f'/proc/{row["pid"]}').exists():out.append({'kind':RecoveryKind.DANGLING_PROCESS,'attempt_id':a.attempt_id,'detail':'recorded process is gone'})
+                if row and row['pid'] and not is_pid_alive(int(row['pid'])):out.append({'kind':RecoveryKind.DANGLING_PROCESS,'attempt_id':a.attempt_id,'detail':'recorded process is gone'})
         return out
     def plan(self,items:list[dict])->RecoveryPlan:
         unknown=any((i.get('kind')==RecoveryKind.UNKNOWN or str(i.get('kind'))==RecoveryKind.UNKNOWN.value) for i in items)
@@ -31,7 +52,7 @@ class RecoveryController:
             if i.get('kind') in {RecoveryKind.DANGLING_PROCESS,RecoveryKind.EXPIRED_LOCK,RecoveryKind.STALE_ATTEMPT,RecoveryKind.INTERRUPTED_MERGE}:safe.append(i)
         return RecoveryPlan(enter_safe_mode=unknown,safe_actions=safe,destructive_actions=[])
     def create_bundle(self,attempt_id:str)->RecoveryBundle:
-        root=self.repo/'.orch'/'recovery'/attempt_id/uuid.uuid4().hex[:8];root.mkdir(parents=True,exist_ok=True);meta=root/'metadata.json';meta.write_text(json.dumps({'attempt_id':attempt_id},indent=2));return RecoveryBundle(root,meta)
+        root=self.repo/'.orch'/'recovery'/attempt_id/uuid.uuid4().hex[:8];root.mkdir(parents=True,exist_ok=True);meta=root/'metadata.json';meta.write_text(json.dumps({'attempt_id':attempt_id},indent=2),encoding='utf-8');return RecoveryBundle(root,meta)
     def apply(self,plan:RecoveryPlan,run_id:str|None=None)->dict:
         applied=[]
         if plan.enter_safe_mode and self.store and run_id:self.store.enter_safe_mode(run_id,'recovery encountered unknown physical state')

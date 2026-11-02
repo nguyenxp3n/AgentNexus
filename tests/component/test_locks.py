@@ -48,3 +48,14 @@ def test_migration_slots_are_unique_across_connections(tmp_path: Path) -> None:
         s=StateStore.open(db); lm=LockManager(s,tmp_path,{'api':(8100,8125)}); lm.acquire_assignment(aid,1,ResourceRequest(migration_count=1)); slot=lm.migration_slots_for(aid)[0]; s.close(); return slot
     with ThreadPoolExecutor(max_workers=8) as ex: slots=list(ex.map(reserve,aids))
     assert len(slots)==len(set(slots))==100
+
+
+def test_expired_port_reallocation_does_not_conflict(tmp_path: Path) -> None:
+    s=store_with_attempt(tmp_path/'s.db'); lm=LockManager(s,tmp_path,{'api':(8000,8000)})
+    lm.acquire_assignment('ATT-1',1,ResourceRequest(paths=['src/**'],lease_seconds=10,ports={'api':1}))
+    assert lm.ports_for('ATT-1')==[8000]
+    s._conn.execute('UPDATE port_allocations SET expires_at=1 WHERE attempt_id=?',('ATT-1',))
+    s2=store_with_attempt(tmp_path/'s.db','ATT-2'); lm2=LockManager(s2,tmp_path,{'api':(8000,8000)})
+    lm2.acquire_assignment('ATT-2',1,ResourceRequest(paths=['other/**'],lease_seconds=120,ports={'api':1}))
+    assert lm2.ports_for('ATT-2')==[8000]
+    s.close(); s2.close()

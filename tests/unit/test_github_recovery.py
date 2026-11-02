@@ -1,7 +1,8 @@
 from __future__ import annotations
 from pathlib import Path
 from orch.core.github import GitHubClient, CIState
-from orch.core.recovery import RecoveryController, RecoveryKind
+from orch.core.recovery import RecoveryController, RecoveryKind, is_pid_alive
+import os
 
 class FakeRunner:
     def __init__(self): self.calls=[]
@@ -22,3 +23,9 @@ def test_recovery_unknown_item_enters_safe_mode_plan(tmp_path: Path) -> None:
     rc=RecoveryController(tmp_path,None)
     p=rc.plan([{'kind':RecoveryKind.UNKNOWN,'detail':'mystery'}])
     assert p.enter_safe_mode and not p.destructive_actions
+
+
+def test_is_pid_alive_detects_current_and_dead_processes() -> None:
+    assert is_pid_alive(os.getpid()) is True
+    assert is_pid_alive(-1) is False
+    assert is_pid_alive(0) is False

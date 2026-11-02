@@ -70,7 +70,7 @@ class Orchestrator:
         self.store._conn.execute('INSERT OR REPLACE INTO worktrees(attempt_id,path,branch,base_sha,current_head_sha,status) VALUES(?,?,?,?,?,?)',(a.attempt_id,str(ws.path),ws.branch,a.base_sha,a.base_sha,'ACTIVE'))
         env=self.environment.build(a);adapter=self._adapter(t);caps=adapter.discover()
         if not caps.available:raise HarnessError('configured harness unavailable')
-        prompt=self.compile_prompt(a,t);pdir=self.repo/'.orch'/'prompts'/t.id/a.attempt_id;pdir.mkdir(parents=True,exist_ok=True);(pdir/'system.txt').write_text(prompt);ph=hashlib.sha256(prompt.encode()).hexdigest();(pdir/'manifest.json').write_text(json.dumps({'prompt_sha256':ph,'task_spec_sha256':a.task_spec_sha256,'adapter':adapter.name,'adapter_version':caps.version},indent=2));a=self.store.update_attempt_identity(a.attempt_id,prompt_sha256=ph)
+        prompt=self.compile_prompt(a,t);pdir=self.repo/'.orch'/'prompts'/t.id/a.attempt_id;pdir.mkdir(parents=True,exist_ok=True);(pdir/'system.txt').write_text(prompt,encoding='utf-8');ph=hashlib.sha256(prompt.encode()).hexdigest();(pdir/'manifest.json').write_text(json.dumps({'prompt_sha256':ph,'task_spec_sha256':a.task_spec_sha256,'adapter':adapter.name,'adapter_version':caps.version},indent=2),encoding='utf-8');a=self.store.update_attempt_identity(a.attempt_id,prompt_sha256=ph)
         prepared=adapter.prepare(prompt=prompt,cwd=ws.path,env=env.env)
         a=self.store.transition_task(a.attempt_id,expected_state=TaskState.ASSIGNED,expected_version=a.version,to_state=TaskState.SPAWNED,actor=TransitionActor.DISPATCHER)
         a=self.store.transition_task(a.attempt_id,expected_state=TaskState.SPAWNED,expected_version=a.version,to_state=TaskState.IN_PROGRESS,actor=TransitionActor.RUNTIME_MONITOR)
@@ -99,7 +99,9 @@ class Orchestrator:
         else:a=self.store.transition_task(a.attempt_id,expected_state=TaskState.IN_PROGRESS,expected_version=a.version,to_state=TaskState.RECOVERING,actor=TransitionActor.RECOVERY)
         return SpawnResult(a.task_id,a.attempt_id,a.state,process,Path(a.worktree_path) if a.worktree_path else None)
     async def spawn_wave(self,wave_id:int,run_id:str|None=None)->list[SpawnResult]:
-        run_id=run_id or self.store.latest_run_id();records=self.store.list_task_records(run_id);plan=ProjectPlan.model_validate({'version':1,'project':{'name':'active'},'tasks':[json.loads(r['spec_json']) for r in records]});waves=DagPlan.from_plan(plan).execution_waves();ids=waves[wave_id];sem=asyncio.Semaphore(self.config.scheduler.max_parallel_agents)
+        run_id=run_id or self.store.latest_run_id()
+        if not run_id:raise ValueError('no active run_id available')
+        records=self.store.list_task_records(run_id);plan=ProjectPlan.model_validate({'version':1,'project':{'name':'active'},'tasks':[json.loads(r['spec_json']) for r in records]});waves=DagPlan.from_plan(plan).execution_waves();ids=waves[wave_id];sem=asyncio.Semaphore(self.config.scheduler.max_parallel_agents)
         async def one(tid):
             async with sem:return await self.spawn_task(tid,run_id)
         return await asyncio.gather(*(one(x) for x in ids))

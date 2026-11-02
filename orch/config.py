@@ -30,7 +30,7 @@ def _coerce(value:str)->Any:
 
 def load_config(repo_root:Path)->OrchConfig:
     path=Path(repo_root)/'.orch'/'config.yaml'; data:dict[str,Any]={}
-    if path.exists(): data=yaml.safe_load(path.read_text()) or {}
+    if path.exists(): data=yaml.safe_load(path.read_text(encoding='utf-8')) or {}
     for key,value in os.environ.items():
         if not key.startswith('ORCH_') or '__' not in key: continue
         parts=key[5:].lower().split('__'); cur=data

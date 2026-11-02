@@ -1,5 +1,5 @@
 from __future__ import annotations
-import asyncio,hashlib,json,os,socket,time
+import asyncio,hashlib,json,os,socket,subprocess,time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -23,14 +23,16 @@ class ProcessSupervisor:
         if on_spawn:on_spawn(ident)
         event_lock=asyncio.Lock();seq={'n':0}
         async def pump(stream,path,label):
-            with Path(path).open('w',encoding='utf-8') as f:
+            with Path(path).open('w',encoding='utf-8',errors='replace') as f:
                 while True:
                     raw=await stream.readline()
                     if not raw:break
-                    text=redact_text(raw.decode(errors='replace'));f.write(text);f.flush()
+                    text=redact_text(raw.decode(encoding='utf-8',errors='replace'));f.write(text);f.flush()
                     async with event_lock:
                         seq['n']+=1
-                        with eventp.open('a',encoding='utf-8') as ef:ef.write(json.dumps({'ts':time.time(),'stream':label,'seq':seq['n'],'text':text.rstrip('\n')})+'\n')
+                        trimmed=text.rstrip('\r\n')
+                        if len(trimmed)>10000:trimmed=trimmed[:10000]+' [TRUNCATED]'
+                        with eventp.open('a',encoding='utf-8') as ef:ef.write(json.dumps({'ts':time.time(),'stream':label,'seq':seq['n'],'text':trimmed})+'\n')
         out_task=asyncio.create_task(pump(proc.stdout,outp,'stdout'));err_task=asyncio.create_task(pump(proc.stderr,errp,'stderr'))
         if stdin_text is not None and proc.stdin is not None:
             proc.stdin.write(stdin_text.encode());await proc.stdin.drain();proc.stdin.close()
@@ -39,9 +41,17 @@ class ProcessSupervisor:
             if timeout_seconds is None:code=await proc.wait()
             else:code=await asyncio.wait_for(proc.wait(),timeout_seconds)
         except asyncio.TimeoutError:
-            timed=True;proc.terminate()
+            timed=True
+            try:
+                if os.name=='nt':
+                    subprocess.run(['taskkill','/F','/T','/PID',str(proc.pid)],capture_output=True,check=False)
+                proc.terminate()
+            except (ProcessLookupError,OSError):pass
             try:await asyncio.wait_for(proc.wait(),2)
-            except asyncio.TimeoutError:proc.kill();await proc.wait()
+            except asyncio.TimeoutError:
+                try:proc.kill()
+                except (ProcessLookupError,OSError):pass
+                await proc.wait()
             code=proc.returncode if proc.returncode is not None else -9
         await asyncio.gather(out_task,err_task)
         return ExecutionResult(int(code or 0),outp,errp,ident,fingerprint,time.time()-start,timed)

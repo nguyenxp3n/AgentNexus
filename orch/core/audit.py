@@ -8,7 +8,7 @@ from orch.models.audit import AuditDisposition,AuditFinding,AuditReport,AuditSte
 from orch.models.execution import TaskAttempt
 from orch.models.task import TaskSpec,VerificationSpec
 
-_SECRET_RULES=[('PRIVATE_KEY',re.compile(r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----')),('GITHUB_TOKEN',re.compile(r'gh[ps]_[A-Za-z0-9]{20,}')),('OPENAI_KEY',re.compile(r'sk-[A-Za-z0-9_-]{16,}')),('AWS_KEY',re.compile(r'AKIA[0-9A-Z]{16}'))]
+_SECRET_RULES=[('PRIVATE_KEY',re.compile(r'-----BEGIN [A-Z ]*PRIVATE KEY-----')),('GITHUB_TOKEN',re.compile(r'gh[ps]_[A-Za-z0-9]{20,}')),('OPENAI_KEY',re.compile(r'sk-[A-Za-z0-9_-]{16,}')),('AWS_KEY',re.compile(r'AKIA[0-9A-Z]{16}'))]
 @dataclass(frozen=True)
 class SecretFinding: rule_id:str; fingerprint:str; match:str
 
@@ -20,7 +20,7 @@ def verify_certificate_digest(payload:dict,digest:str)->bool:return hashlib.sha2
 def task_spec_digest(task:TaskSpec)->str:return hashlib.sha256(canonical_json_bytes(task.model_dump(mode='json'))).hexdigest()
 def scan_secrets(text:str)->list[SecretFinding]:
     out=[]
-    if re.search(r'(?m)^diff --git a/\.env(?:\s|$)',text) or re.search(r'(?m)^\+[^+].*\.env',text):out.append(SecretFinding('ENV_FILE',hashlib.sha256(b'.env').hexdigest(),'.env'))
+    if re.search(r'(?m)^diff --git a/(?:.*/)?\.env(?:\.[a-zA-Z0-9_.-]+)?(?:\s|$)',text) or re.search(r'(?m)^\+[^+].*\.env(?:\.[a-zA-Z0-9_.-]+)?',text):out.append(SecretFinding('ENV_FILE',hashlib.sha256(b'.env').hexdigest(),'.env'))
     for rid,pat in _SECRET_RULES:
         for m in pat.finditer(text):
             val=m.group(0);out.append(SecretFinding(rid,hashlib.sha256(val.encode()).hexdigest(),val[:12]))
@@ -51,7 +51,7 @@ class AuditRunner:
             report=AuditReport(audit_id=audit_id,run_id=a.run_id,task_id=a.task_id,attempt_id=a.attempt_id,base_sha=a.base_sha,head_sha=a.head_sha or '',task_spec_sha256=a.task_spec_sha256,prompt_sha256=a.prompt_sha256,evidence_manifest_sha256=self._manifest_digest([]),steps=steps,findings=findings,disposition=AuditDisposition.VIOLATION)
             report.certificate_sha256=canonical_certificate_bytes(certificate_payload(report)).sha256;return report
         # Evidence snapshot diff.
-        patch=self.git.diff_patch(a.base_sha,a.head_sha or self.git.head());patch_path=adir/'diff.patch';patch_path.write_text(patch);evidence.append(EvidenceRef(kind='git_diff',path=str(patch_path),sha256=hashlib.sha256(patch_path.read_bytes()).hexdigest(),size_bytes=patch_path.stat().st_size))
+        patch=self.git.diff_patch(a.base_sha,a.head_sha or self.git.head());patch_path=adir/'diff.patch';patch_path.write_text(patch,encoding='utf-8');evidence.append(EvidenceRef(kind='git_diff',path=str(patch_path),sha256=hashlib.sha256(patch_path.read_bytes()).hexdigest(),size_bytes=patch_path.stat().st_size))
         # Gate 2 scope.
         scope_ok=True
         for line in self.git.diff_name_status(a.base_sha,a.head_sha or self.git.head()):
@@ -85,7 +85,8 @@ class AuditRunner:
             if v.type=='manual_review':accept_unknown=True;idx+=1;findings.append(self._finding(idx,'acceptance',Severity.MEDIUM,'MANUAL_REVIEW_REQUIRED',criterion.description));continue
             if v.type=='file_exists' and (not v.path or not (self.repo/v.path).exists()):accept_ok=False;idx+=1;findings.append(self._finding(idx,'acceptance',Severity.HIGH,'ACCEPTANCE_FAILED',criterion.description,v.path))
             if v.type=='file_matches':
-                if not v.path or not (self.repo/v.path).exists() or not re.search(v.pattern or '',(self.repo/v.path).read_text()):accept_ok=False;idx+=1;findings.append(self._finding(idx,'acceptance',Severity.HIGH,'ACCEPTANCE_FAILED',criterion.description,v.path))
+                content=(self.repo/v.path).read_text(encoding='utf-8',errors='replace') if (v.path and (self.repo/v.path).exists()) else ''
+                if not v.path or not (self.repo/v.path).exists() or not re.search(v.pattern or '',content):accept_ok=False;idx+=1;findings.append(self._finding(idx,'acceptance',Severity.HIGH,'ACCEPTANCE_FAILED',criterion.description,v.path))
             if v.type=='command' and v.command:
                 ev=vr.run(v.command,cwd=self.repo,name=f'ac-{criterion.id}',timeout_seconds=task.timeout_seconds)
                 if ev.timed_out or ev.exit_code!=0:accept_ok=False;idx+=1;findings.append(self._finding(idx,'acceptance',Severity.HIGH,'ACCEPTANCE_FAILED',criterion.description))
@@ -100,5 +101,5 @@ class AuditRunner:
         disposition=AuditDisposition.PASS if all(s.disposition is AuditDisposition.PASS for s in steps) else (AuditDisposition.VIOLATION if any(s.disposition is AuditDisposition.VIOLATION for s in steps) else AuditDisposition.FAIL)
         report=AuditReport(audit_id=audit_id,run_id=a.run_id,task_id=a.task_id,attempt_id=a.attempt_id,base_sha=a.base_sha,head_sha=a.head_sha or '',task_spec_sha256=a.task_spec_sha256,prompt_sha256=a.prompt_sha256,evidence_manifest_sha256=self._manifest_digest(evidence),steps=steps,findings=findings,evidence=evidence,disposition=disposition)
         report.certificate_sha256=canonical_certificate_bytes(certificate_payload(report)).sha256
-        (adir/'audit_report.json').write_text(report.model_dump_json(indent=2));(adir/'certificate.sha256').write_text(report.certificate_sha256+'\n')
+        (adir/'audit_report.json').write_text(report.model_dump_json(indent=2),encoding='utf-8');(adir/'certificate.sha256').write_text(report.certificate_sha256+'\n',encoding='utf-8')
         return report

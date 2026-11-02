@@ -13,10 +13,21 @@ class WorktreeManager:
     def __init__(self,repo:Path,root:Path,protected:set[str]|None=None):self.repo=Path(repo).resolve();self.root=Path(root).resolve();self.root.mkdir(parents=True,exist_ok=True);self.protected=protected or {'main','master','production'};self.git=GitRepository(self.repo)
     def _safe_branch(self,a:TaskAttempt)->str:
         branch=a.branch or f'orch/{a.run_id}/{a.task_id}/{a.attempt_id[:8]}'
-        if branch in self.protected or '..' in branch or branch.startswith('/') or branch.endswith('/') or ' ' in branch:raise WorktreeError('unsafe or protected branch')
+        if (
+            branch in self.protected
+            or '..' in branch
+            or branch.startswith('/')
+            or branch.endswith('/')
+            or branch.startswith('-')
+            or '\\' in branch
+            or ' ' in branch
+            or any(c in branch for c in set('~^:?*['))
+        ):raise WorktreeError('unsafe or protected branch')
         return branch
     def create(self,a:TaskAttempt)->Workspace:
-        branch=self._safe_branch(a);path=self.root/a.run_id/a.task_id/a.attempt_id;path.parent.mkdir(parents=True,exist_ok=True)
+        branch=self._safe_branch(a);path=self.root/a.run_id/a.task_id/a.attempt_id
+        if self.root not in path.resolve().parents:raise WorktreeError('worktree path escapes managed root')
+        path.parent.mkdir(parents=True,exist_ok=True)
         if path.exists():raise WorktreeError(f'worktree path exists: {path}')
         p=self.git.runner.run(['worktree','add','-b',branch,str(path),a.base_sha],self.repo)
         if p.returncode!=0:raise WorktreeError(p.stderr.strip())
@@ -30,6 +41,9 @@ class WorktreeManager:
     def remove(self,path:Path,*,force:bool=False):
         p=Path(path).resolve()
         if p==self.root or self.root not in p.parents:raise ValueError('refusing to remove worktree outside managed root')
+        if not p.exists():
+            self.git.runner.run(['worktree','prune'],self.repo)
+            return
         ins=self.inspect(p)
         if ins.dirty and not force:raise WorktreeError('worktree dirty')
         args=['worktree','remove']+(['--force'] if force else [])+[str(p)];r=self.git.runner.run(args,self.repo)

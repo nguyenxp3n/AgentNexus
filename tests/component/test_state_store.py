@@ -49,3 +49,9 @@ def test_safe_mode_is_durable(tmp_path: Path) -> None:
     assert s.get_run_state('RUN-1') is RunState.SAFE_MODE
     assert 'unknown physical state' in s.safe_mode_reason('RUN-1')
     s.close()
+
+
+def test_state_store_context_manager(tmp_path: Path) -> None:
+    with StateStore.open(tmp_path/'state.db') as store:
+        store.initialize()
+        assert store.schema_version() == 1

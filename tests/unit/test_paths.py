@@ -19,6 +19,7 @@ def test_ambiguous_exclusive_globs_fail_closed(tmp_path: Path) -> None:
 
 def test_parent_traversal_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(PathOwnershipError): normalize_repo_path(tmp_path,'../../outside')
+    with pytest.raises(PathOwnershipError): normalize_repo_path(tmp_path,'C:/Windows/System32')
 
 
 def test_symlink_escape_is_rejected(tmp_path: Path) -> None:

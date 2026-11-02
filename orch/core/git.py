@@ -7,7 +7,7 @@ from orch.errors import WorktreeError
 class GitResult: argv:list[str]; returncode:int; stdout:str; stderr:str
 class GitRunner:
     def run(self,argv:list[str],cwd:Path,*,check:bool=False)->GitResult:
-        p=subprocess.run(['git',*argv],cwd=Path(cwd),text=True,capture_output=True,shell=False)
+        p=subprocess.run(['git',*argv],cwd=Path(cwd),encoding='utf-8',errors='replace',capture_output=True,shell=False)
         r=GitResult(argv,p.returncode,p.stdout,p.stderr)
         if check and p.returncode!=0:raise WorktreeError(p.stderr.strip() or 'git command failed')
         return r
@@ -17,7 +17,9 @@ class GitRepository:
     def root(self)->Path:return Path(self._out(['rev-parse','--show-toplevel'])).resolve()
     def head(self)->str:return self._out(['rev-parse','HEAD'])
     def branch(self)->str:return self._out(['branch','--show-current'])
-    def status_lines(self)->list[str]:return self._out(['status','--porcelain=v1','--untracked-files=all']).splitlines() if self._out(['status','--porcelain=v1','--untracked-files=all']) else []
+    def status_lines(self)->list[str]:
+        out=self._out(['status','--porcelain=v1','--untracked-files=all'])
+        return out.splitlines() if out else []
     def is_clean(self)->bool:return len(self.status_lines())==0
     def merge_base(self,a:str,b:str)->str:return self._out(['merge-base',a,b])
     def diff_names(self,base:str,head:str)->list[str]:
